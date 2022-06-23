@@ -253,7 +253,6 @@ enum Ice9Error ice9_flash_fpga(const char *filename) {
     const char *devstr = "i:0x3524:0x0001";
     bool slow_clock = false;
     FILE *f = NULL;
-    long file_size = -1;
 
 
     f = fopen(filename, "rb");
@@ -283,8 +282,7 @@ enum Ice9Error ice9_flash_fpga(const char *filename) {
     sram_prepare();
     sram_read_status();
     fprintf(stderr, "Bye.\n");
-    sram_chip_select();
-    send_byte_command(LSC_BITSTREAM_BURST);
+    sram_bitstream_burst();
     while (1) {
         const uint32_t len = 16*1024;
         static unsigned char buffer[16*1024];
@@ -328,8 +326,7 @@ enum Ice9Error ice9_flash_fpga_mem(void *buf, int bufsize) {
     sram_prepare();
     sram_read_status();
     fprintf(stderr, "Bye.\n");
-    sram_chip_select();
-    send_byte_command(LSC_BITSTREAM_BURST);
+    sram_bitstream_burst();
     while (bufsize) {
         const int len = (bufsize < 16*1024) ? bufsize : 16*1024;
         if (verbose)
