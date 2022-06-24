@@ -63,6 +63,10 @@ EXTERN_C struct ice9_handle * ice9_new();
 
 EXTERN_C void ice9_free(struct ice9_handle *hnd);
 
+EXTERN_C void ice9_set_info_logger(void (*log_info)(const char *format, ...));
+
+EXTERN_C void ice9_set_error_logger(void (*log_error)(const char *file, int line, const char *format, ...));
+
 EXTERN_C enum Ice9Error ice9_open(struct ice9_handle *hnd);
 
 EXTERN_C enum Ice9Error ice9_usb_reset(struct ice9_handle *hnd);

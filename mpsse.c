@@ -30,6 +30,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include "logger.h"
 #include "mpsse.h"
 
 // ---------------------------------------------------------
@@ -139,14 +140,14 @@ void mpsse_check_rx()
 		int rc = ftdi_read_data(&mpsse_ftdic, &data, 1);
 		if (rc <= 0)
 			break;
-		fprintf(stderr, "unexpected rx byte: %02X\n", data);
+		LOG_ERROR("mpsse unexpected rx byte: %02X\n", data);
 	}
 }
 
 void mpsse_error(int status)
 {
 	mpsse_check_rx();
-	fprintf(stderr, "ABORT.\n");
+	LOG_ERROR("mpsse ABORT.\n");
 	if (mpsse_ftdic_open) {
 		if (mpsse_ftdic_latency_set)
 			ftdi_set_latency_timer(&mpsse_ftdic, mpsse_ftdi_latency);
@@ -162,7 +163,7 @@ uint8_t mpsse_recv_byte()
 	while (1) {
 		int rc = ftdi_read_data(&mpsse_ftdic, &data, 1);
 		if (rc < 0) {
-			fprintf(stderr, "Read error.\n");
+			LOG_ERROR("mpsse read error.\n");
 			mpsse_error(2);
 		}
 		if (rc == 1)
@@ -176,7 +177,7 @@ void mpsse_send_byte(uint8_t data)
 {
 	int rc = ftdi_write_data(&mpsse_ftdic, &data, 1);
 	if (rc != 1) {
-		fprintf(stderr, "Write error (single byte, rc=%d, expected %d).\n", rc, 1);
+		LOG_ERROR("mpsse write error (single byte, rc=%d, expected %d).\n", rc, 1);
 		mpsse_error(2);
 	}
 }
@@ -193,7 +194,7 @@ void mpsse_send_spi(uint8_t *data, int n)
 
 	int rc = ftdi_write_data(&mpsse_ftdic, data, n);
 	if (rc != n) {
-		fprintf(stderr, "Write error (chunk, rc=%d, expected %d).\n", rc, n);
+		LOG_ERROR("mpsse write error (chunk, rc=%d, expected %d).\n", rc, n);
 		mpsse_error(2);
 	}
 }
@@ -210,7 +211,7 @@ void mpsse_xfer_spi(uint8_t *data, int n)
 
 	int rc = ftdi_write_data(&mpsse_ftdic, data, n);
 	if (rc != n) {
-		fprintf(stderr, "Write error (chunk, rc=%d, expected %d).\n", rc, n);
+		LOG_ERROR("mpsse write error (chunk, rc=%d, expected %d).\n", rc, n);
 		mpsse_error(2);
 	}
 
@@ -297,12 +298,12 @@ void mpsse_init(int ifnum, const char *devstr, bool slow_clock)
 
 	if (devstr != NULL) {
 		if (ftdi_usb_open_string(&mpsse_ftdic, devstr)) {
-			fprintf(stderr, "Can't find iCE FTDI USB device (device string %s).\n", devstr);
+			LOG_ERROR("Can't find iCE FTDI USB device (device string %s).\n", devstr);
 			mpsse_error(2);
 		}
 	} else {
 		if (ftdi_usb_open(&mpsse_ftdic, 0x0403, 0x6010) && ftdi_usb_open(&mpsse_ftdic, 0x0403, 0x6014)) {
-			fprintf(stderr, "Can't find iCE FTDI USB device (vendor_id 0x0403, device_id 0x6010 or 0x6014).\n");
+			LOG_ERROR("Can't find iCE FTDI USB device (vendor_id 0x0403, device_id 0x6010 or 0x6014).\n");
 			mpsse_error(2);
 		}
 	}
@@ -310,23 +311,23 @@ void mpsse_init(int ifnum, const char *devstr, bool slow_clock)
 	mpsse_ftdic_open = true;
 
 	if (ftdi_usb_reset(&mpsse_ftdic)) {
-		fprintf(stderr, "Failed to reset iCE FTDI USB device.\n");
+		LOG_ERROR("Failed to reset iCE FTDI USB device.\n");
 		mpsse_error(2);
 	}
 
 	if (ftdi_usb_purge_buffers(&mpsse_ftdic)) {
-		fprintf(stderr, "Failed to purge buffers on iCE FTDI USB device.\n");
+		LOG_ERROR("Failed to purge buffers on iCE FTDI USB device.\n");
 		mpsse_error(2);
 	}
 
 	if (ftdi_get_latency_timer(&mpsse_ftdic, &mpsse_ftdi_latency) < 0) {
-		fprintf(stderr, "Failed to get latency timer (%s).\n", ftdi_get_error_string(&mpsse_ftdic));
+		LOG_ERROR("Failed to get latency timer (%s).\n", ftdi_get_error_string(&mpsse_ftdic));
 		mpsse_error(2);
 	}
 
 	/* 1 is the fastest polling, it means 1 kHz polling */
 	if (ftdi_set_latency_timer(&mpsse_ftdic, 1) < 0) {
-		fprintf(stderr, "Failed to set latency timer (%s).\n", ftdi_get_error_string(&mpsse_ftdic));
+		LOG_ERROR("Failed to set latency timer (%s).\n", ftdi_get_error_string(&mpsse_ftdic));
 		mpsse_error(2);
 	}
 
@@ -334,7 +335,7 @@ void mpsse_init(int ifnum, const char *devstr, bool slow_clock)
 
 	/* Enter MPSSE (Multi-Protocol Synchronous Serial Engine) mode. Set all pins to output. */
 	if (ftdi_set_bitmode(&mpsse_ftdic, 0xff, BITMODE_MPSSE) < 0) {
-		fprintf(stderr, "Failed to set BITMODE_MPSSE on iCE FTDI USB device.\n");
+		LOG_ERROR("Failed to set BITMODE_MPSSE on iCE FTDI USB device.\n");
 		mpsse_error(2);
 	}
 
