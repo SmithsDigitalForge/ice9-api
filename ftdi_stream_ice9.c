@@ -48,6 +48,7 @@
 #include <libusb.h>
 
 #include "ftdi.h"
+#include "logger.h"
 
 typedef struct
 {
@@ -110,7 +111,7 @@ ftdi_readstream_cb(struct libusb_transfer *transfer)
     }
     else
     {
-        fprintf(stderr, "unknown status %d\n",transfer->status);
+        LOG_ERROR("ftdi unknown status %d\n",transfer->status);
         state->result = LIBUSB_ERROR_IO;
     }
 }
@@ -259,7 +260,6 @@ ftdi_readstream_ice9(struct ftdi_context *ftdi,
      */
 
     cleanup:
-    fprintf(stderr, "cleanup\n");
     if (transfers)
         free(transfers);
     if (err)

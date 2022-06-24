@@ -6,7 +6,7 @@ find_library(LIBUSB_LIBRARY usb NAMES usb usb-1.0)
 find_path(FTDI_INCLUDE_DIR ftdi.h PATH_SUFFIXES "libftdi1")
 find_library(FTDI_LIBRARY ftdi NAMES ftdi ftdi1)
 
-set(LIB_SOURCES sram_flash.c mpsse.c ice9.c ftdi_stream_ice9.c)
+set(LIB_SOURCES sram_flash.c mpsse.c ice9.c ftdi_stream_ice9.c logger.c)
 add_library(LIB_OBJECTS OBJECT ${LIB_SOURCES})
 set_target_properties(LIB_OBJECTS PROPERTIES POSITION_INDEPENDENT_CODE 1)
 target_compile_options(LIB_OBJECTS PRIVATE -Wall -Werror -Wno-deprecated-declarations)

@@ -1,4 +1,5 @@
 #include "ice9.h"
+#include "logger.h"
 #include <time.h>
 #include <libftdi1/ftdi.h>
 #include <stdio.h>
@@ -120,7 +121,7 @@ const char* ice9_error_string(enum Ice9Error code) {
         case NoDataAvailable: return "No Data available for read";
         case PingMismatch: return "Ping mismatch";
         default:
-            printf("Error code %d", code);
+            LOG_INFO("unknown ice9 error code %d\n");
             return "Unknown";
     }
 }
@@ -335,7 +336,7 @@ enum Ice9Error ice9_ping_bridge(struct ice9_handle *hnd, uint8_t pingid) {
     lib_try(ice9_read_words(hnd, &pingret, 1));
     pingret = pingret & 0xFF;
     if (pingret != pingid) {
-        printf("Ping mismatch - sent %x, recv %x\n", pingid, pingret);
+        LOG_INFO("ice9 ping mismatch - sent %x, recv %x\n", pingid, pingret);
         return PingMismatch;
     }
     return OK;

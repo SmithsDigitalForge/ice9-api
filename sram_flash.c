@@ -36,6 +36,7 @@
 #include <sys/stat.h>
 
 #include "lattice_cmds.h"
+#include "logger.h"
 #include "mpsse.h"
 #include "ice9.h"
 
@@ -117,7 +118,7 @@ static void print_idcode(uint32_t idcode){
             {
                 connected_device.name = ecp_devices[i].device_name;
                 connected_device.type = TYPE_ECP5;
-                printf("IDCODE: 0x%08x (%s)\n", idcode ,ecp_devices[i].device_name);
+                LOG_INFO("FPGA IDCODE: 0x%08x (%s)\n", idcode ,ecp_devices[i].device_name);
                 return;
             }
     }
@@ -128,54 +129,54 @@ static void print_idcode(uint32_t idcode){
             {
                 connected_device.name = nx_devices[i].device_name;
                 connected_device.type = TYPE_NX;
-                printf("IDCODE: 0x%08x (%s)\n", idcode ,nx_devices[i].device_name);
+                LOG_INFO("FPGA IDCODE: 0x%08x (%s)\n", idcode ,nx_devices[i].device_name);
                 return;
             }
     }
-    printf("IDCODE: 0x%08x does not match :(\n", idcode);
+    LOG_INFO("FPGA IDCODE: 0x%08x does not match :(\n", idcode);
     exit(1);
 }
 
 void print_ecp5_status_register(uint32_t status){	
-	printf("ECP5 Status Register: 0x%08x\n", status);
+	LOG_INFO("ECP5 Status Register: 0x%08x\n", status);
 
 	if(verbose){
-		printf("  Transparent Mode:   %s\n",  status & (1 << 0)  ? "Yes" : "No" );
-		printf("  Config Target:      %s\n",  status & (7 << 1)  ? "eFuse" : "SRAM" );
-		printf("  JTAG Active:        %s\n",  status & (1 << 4)  ? "Yes" : "No" );
-		printf("  PWD Protection:     %s\n",  status & (1 << 5)  ? "Yes" : "No" );
-		printf("  Decrypt Enable:     %s\n",  status & (1 << 7)  ? "Yes" : "No" );
-		printf("  DONE:               %s\n",  status & (1 << 8)  ? "Yes" : "No" );
-		printf("  ISC Enable:         %s\n",  status & (1 << 9)  ? "Yes" : "No" );
-		printf("  Write Enable:       %s\n",  status & (1 << 10) ? "Writable" : "Not Writable");
-		printf("  Read Enable:        %s\n",  status & (1 << 11) ? "Readable" : "Not Readable");
-		printf("  Busy Flag:          %s\n",  status & (1 << 12) ? "Yes" : "No" );
-		printf("  Fail Flag:          %s\n",  status & (1 << 13) ? "Yes" : "No" );
-		printf("  Feature OTP:        %s\n",  status & (1 << 14) ? "Yes" : "No" );
-		printf("  Decrypt Only:       %s\n",  status & (1 << 15) ? "Yes" : "No" );
-		printf("  PWD Enable:         %s\n",  status & (1 << 16) ? "Yes" : "No" );
-		printf("  Encrypt Preamble:   %s\n",  status & (1 << 20) ? "Yes" : "No" );
-		printf("  Std Preamble:       %s\n",  status & (1 << 21) ? "Yes" : "No" );
-		printf("  SPIm Fail 1:        %s\n",  status & (1 << 22) ? "Yes" : "No" );
+		LOG_INFO("  Transparent Mode:   %s\n",  status & (1 << 0)  ? "Yes" : "No" );
+		LOG_INFO("  Config Target:      %s\n",  status & (7 << 1)  ? "eFuse" : "SRAM" );
+		LOG_INFO("  JTAG Active:        %s\n",  status & (1 << 4)  ? "Yes" : "No" );
+		LOG_INFO("  PWD Protection:     %s\n",  status & (1 << 5)  ? "Yes" : "No" );
+		LOG_INFO("  Decrypt Enable:     %s\n",  status & (1 << 7)  ? "Yes" : "No" );
+		LOG_INFO("  DONE:               %s\n",  status & (1 << 8)  ? "Yes" : "No" );
+		LOG_INFO("  ISC Enable:         %s\n",  status & (1 << 9)  ? "Yes" : "No" );
+		LOG_INFO("  Write Enable:       %s\n",  status & (1 << 10) ? "Writable" : "Not Writable");
+		LOG_INFO("  Read Enable:        %s\n",  status & (1 << 11) ? "Readable" : "Not Readable");
+		LOG_INFO("  Busy Flag:          %s\n",  status & (1 << 12) ? "Yes" : "No" );
+		LOG_INFO("  Fail Flag:          %s\n",  status & (1 << 13) ? "Yes" : "No" );
+		LOG_INFO("  Feature OTP:        %s\n",  status & (1 << 14) ? "Yes" : "No" );
+		LOG_INFO("  Decrypt Only:       %s\n",  status & (1 << 15) ? "Yes" : "No" );
+		LOG_INFO("  PWD Enable:         %s\n",  status & (1 << 16) ? "Yes" : "No" );
+		LOG_INFO("  Encrypt Preamble:   %s\n",  status & (1 << 20) ? "Yes" : "No" );
+		LOG_INFO("  Std Preamble:       %s\n",  status & (1 << 21) ? "Yes" : "No" );
+		LOG_INFO("  SPIm Fail 1:        %s\n",  status & (1 << 22) ? "Yes" : "No" );
 		
 		uint8_t bse_error = (status & (7 << 23)) >> 23;
 		switch (bse_error){
-			case 0b000: printf("  BSE Error Code:     No Error (0b000)\n"); break;
-			case 0b001: printf("  BSE Error Code:     ID Error (0b001)\n"); break;
-			case 0b010: printf("  BSE Error Code:     CMD Error - illegal command (0b010)\n"); break;
-			case 0b011: printf("  BSE Error Code:     CRC Error (0b011)\n"); break;
-			case 0b100: printf("  BSE Error Code:     PRMB Error - preamble error (0b100)\n"); break;
-			case 0b101: printf("  BSE Error Code:     ABRT Error - configuration aborted by the user (0b101)\n"); break;
-			case 0b110: printf("  BSE Error Code:     OVFL Error - data overflow error (0b110)\n"); break;
-			case 0b111: printf("  BSE Error Code:     SDM Error - bitstream pass the size of SRAM array (0b111)\n"); break;
+			case 0b000: LOG_INFO("  BSE Error Code:     No Error (0b000)\n"); break;
+			case 0b001: LOG_INFO("  BSE Error Code:     ID Error (0b001)\n"); break;
+			case 0b010: LOG_INFO("  BSE Error Code:     CMD Error - illegal command (0b010)\n"); break;
+			case 0b011: LOG_INFO("  BSE Error Code:     CRC Error (0b011)\n"); break;
+			case 0b100: LOG_INFO("  BSE Error Code:     PRMB Error - preamble error (0b100)\n"); break;
+			case 0b101: LOG_INFO("  BSE Error Code:     ABRT Error - configuration aborted by the user (0b101)\n"); break;
+			case 0b110: LOG_INFO("  BSE Error Code:     OVFL Error - data overflow error (0b110)\n"); break;
+			case 0b111: LOG_INFO("  BSE Error Code:     SDM Error - bitstream pass the size of SRAM array (0b111)\n"); break;
 		}
 
-		printf("  Execution Error:    %s\n",  status & (1 << 26) ? "Yes" : "No" );
-		printf("  ID Error:           %s\n",  status & (1 << 27) ? "Yes" : "No" );
-		printf("  Invalid Command:    %s\n",  status & (1 << 28) ? "Yes" : "No" );
-		printf("  SED Error:          %s\n",  status & (1 << 29) ? "Yes" : "No" );
-		printf("  Bypass Mode:        %s\n",  status & (1 << 30) ? "Yes" : "No" );
-		printf("  Flow Through Mode:  %s\n",  status & (1 << 31) ? "Yes" : "No" );
+		LOG_INFO("  Execution Error:    %s\n",  status & (1 << 26) ? "Yes" : "No" );
+		LOG_INFO("  ID Error:           %s\n",  status & (1 << 27) ? "Yes" : "No" );
+		LOG_INFO("  Invalid Command:    %s\n",  status & (1 << 28) ? "Yes" : "No" );
+		LOG_INFO("  SED Error:          %s\n",  status & (1 << 29) ? "Yes" : "No" );
+		LOG_INFO("  Bypass Mode:        %s\n",  status & (1 << 30) ? "Yes" : "No" );
+		LOG_INFO("  Flow Through Mode:  %s\n",  status & (1 << 31) ? "Yes" : "No" );
 	}
 }
 
@@ -265,23 +266,22 @@ enum Ice9Error ice9_flash_fpga(const char *filename) {
     // Reset
     // ---------------------------------------------------------
 
-    fprintf(stderr, "init...\n");
+    LOG_INFO("ice9 init...\n");
     
     mpsse_init(ifnum, devstr, slow_clock);
     
-    fprintf(stderr, "reset..\n");
+    LOG_INFO("ice9 reset..\n");
     
     sram_reset();
     usleep(100);
         
-    fprintf(stderr, "cdone: %s\n", get_cdone() ? "high" : "low");
+    LOG_INFO("ice9 cdone: %s\n", get_cdone() ? "high" : "low");
 
     sram_refresh_fpga();
     sram_read_id();
     sram_read_status(); 
     sram_prepare();
     sram_read_status();
-    fprintf(stderr, "Bye.\n");
     sram_bitstream_burst();
     while (1) {
         const uint32_t len = 16*1024;
@@ -289,7 +289,7 @@ enum Ice9Error ice9_flash_fpga(const char *filename) {
         int rc = fread(buffer, 1, len, f);
         if (rc <= 0) break;
         if (verbose)
-            fprintf(stderr, "sending %d bytes.\n", rc);
+            LOG_INFO("ice9 sending %d bytes.\n", rc);
         mpsse_send_spi(buffer, rc);
     }
     sram_chip_deselect();
@@ -309,28 +309,27 @@ enum Ice9Error ice9_flash_fpga_mem(void *buf, int bufsize) {
     // Reset
     // ---------------------------------------------------------
 
-    fprintf(stderr, "init...\n");
+    LOG_INFO("ice9 init...\n");
 
     mpsse_init(ifnum, devstr, slow_clock);
 
-    fprintf(stderr, "reset..\n");
+    LOG_INFO("ice9 reset..\n");
 
     sram_reset();
     usleep(100);
 
-    fprintf(stderr, "cdone: %s\n", get_cdone() ? "high" : "low");
+    LOG_INFO("ice9 cdone: %s\n", get_cdone() ? "high" : "low");
 
     sram_refresh_fpga();
     sram_read_id();
     sram_read_status();
     sram_prepare();
     sram_read_status();
-    fprintf(stderr, "Bye.\n");
     sram_bitstream_burst();
     while (bufsize) {
         const int len = (bufsize < 16*1024) ? bufsize : 16*1024;
         if (verbose)
-            fprintf(stderr, "Sending %d bytes to Ice9\n", len);
+            LOG_INFO("Sending %d bytes to Ice9\n", len);
         mpsse_send_spi(buf, len);
         buf += len;
         bufsize -= len;
