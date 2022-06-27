@@ -298,6 +298,7 @@ enum Ice9Error ice9_flash_fpga(const char *filename) {
     send_byte_command(ISC_DISABLE);
     sram_chip_deselect();
     mpsse_close();
+    usleep(1000);
     return OK;
 }
 
@@ -340,5 +341,6 @@ enum Ice9Error ice9_flash_fpga_mem(void *buf, int bufsize) {
     send_byte_command(ISC_DISABLE);
     sram_chip_deselect();
     mpsse_close();
+    usleep(1000);
     return OK;
 }
