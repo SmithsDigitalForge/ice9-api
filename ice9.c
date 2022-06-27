@@ -47,7 +47,7 @@ enum Ice9Error ice9_open(struct ice9_handle *hnd) {
         return Error;
     }
     switch (ftdi_set_interface(hnd->ftdi_ptr, INTERFACE_A)) {
-        case 0: break;
+        case 0: { usleep(1000); break; }
         case -1: return UnknownInterface;
         case -2: return USBDeviceUnavailable;
         case -3: return DeviceAlreadyOpen;
@@ -72,7 +72,7 @@ enum Ice9Error ice9_open(struct ice9_handle *hnd) {
 
 enum Ice9Error ice9_usb_reset(struct ice9_handle *hnd) {
     switch (ftdi_usb_reset(hnd->ftdi_ptr)) {
-        case 0: return OK;
+        case 0: { usleep(1000); return OK; }
         case -1: return FTDIResetFailed;
         case -2: return USBDeviceUnavailable;
         default:
@@ -128,7 +128,7 @@ const char* ice9_error_string(enum Ice9Error code) {
 
 enum Ice9Error ice9_fifo_mode(struct ice9_handle *hnd) {
     switch (ftdi_set_bitmode(hnd->ftdi_ptr, 0xFF, 0x00)) {
-        case 0: break;
+        case 0: { usleep(1000); break; }
         case -1: return CannotEnableBitBangMode;
         case -2: return USBDeviceUnavailable;
         default: return Error;
