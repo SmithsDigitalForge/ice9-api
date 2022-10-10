@@ -1,4 +1,5 @@
 project(Ice9API)
+## edits
 cmake_minimum_required(VERSION 3.0)
 
 find_path(LIBUSB_INCLUDE_DIR libusb.h PATH_SUFFIXES "include" "libusb" "libusb-1.0")
