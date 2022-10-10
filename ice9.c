@@ -47,15 +47,16 @@ enum Ice9Error ice9_open(struct ice9_handle *hnd) {
         return Error;
     }
     switch (ftdi_set_interface(hnd->ftdi_ptr, INTERFACE_A)) {
-        case 0: { usleep(1000); break; }
+        case 0: break;
         case -1: return UnknownInterface;
         case -2: return USBDeviceUnavailable;
         case -3: return DeviceAlreadyOpen;
         default:
             return Error;
     }
+    LOG_INFO("newer ice9 open\n");
     switch (ftdi_usb_open(hnd->ftdi_ptr, ICE9_VENDOR_ID, ICE9_DATA_PRODUCT_ID)) {
-        case 0: return OK;
+        case 0: {usleep(1000); return OK;}
         case -3: return USBDeviceNotFound;
         case -4: return UnableToOpenDevice;
         case -5: return UnableToClaimDevice;
@@ -71,8 +72,9 @@ enum Ice9Error ice9_open(struct ice9_handle *hnd) {
 }
 
 enum Ice9Error ice9_usb_reset(struct ice9_handle *hnd) {
+    LOG_INFO("newer ice9 usb_reset\n");
     switch (ftdi_usb_reset(hnd->ftdi_ptr)) {
-        case 0: { usleep(1000); return OK; }
+        case 0: {usleep(1000); return OK;}
         case -1: return FTDIResetFailed;
         case -2: return USBDeviceUnavailable;
         default:
@@ -127,8 +129,9 @@ const char* ice9_error_string(enum Ice9Error code) {
 }
 
 enum Ice9Error ice9_fifo_mode(struct ice9_handle *hnd) {
+    LOG_INFO("newer ice9 fifo_Mode\n");
     switch (ftdi_set_bitmode(hnd->ftdi_ptr, 0xFF, 0x00)) {
-        case 0: { usleep(1000); break; }
+        case 0: break;
         case -1: return CannotEnableBitBangMode;
         case -2: return USBDeviceUnavailable;
         default: return Error;
@@ -141,7 +144,7 @@ enum Ice9Error ice9_fifo_mode(struct ice9_handle *hnd) {
         default: return Error;
     }
     switch (ftdi_set_bitmode(hnd->ftdi_ptr, 0xFF, 0x40)) {
-        case 0: return OK;
+        case 0: {usleep(1000); return OK;}
         case -1: return CannotEnableBitBangMode;
         case -2: return USBDeviceUnavailable;
         default: return Error;
@@ -149,6 +152,10 @@ enum Ice9Error ice9_fifo_mode(struct ice9_handle *hnd) {
 }
 
 enum Ice9Error ice9_close(struct ice9_handle *hnd) {
+    LOG_INFO("closing ftdi_usb\n");
+    ftdi_tciflush(hnd->ftdi_ptr);
+    ftdi_tcoflush(hnd->ftdi_ptr);
+    ftdi_usb_reset(hnd->ftdi_ptr);
     switch (ftdi_usb_close(hnd->ftdi_ptr)) {
         case 0: return OK;
         case -1: return USBReleaseFailed;
