@@ -1,7 +1,7 @@
 #include "ice9.h"
 #include "logger.h"
 #include <time.h>
-#include <libftdi1/ftdi.h>
+#include <libusb-1.0/libusb.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,71 +13,156 @@
 #define MIN(a, b) ((a) < (b)) ? (a) : (b)
 
 struct ice9_handle {
-    struct ftdi_context *ftdi_ptr;
+    struct libusb_context *context;
+    struct libusb_device_handle *device;
+    uint8_t *read_buffer;
+    int read_buffer_size;
+    int read_buffer_head;
+    int read_buffer_tail;
     int stream_bytes_to_read;
     int stream_bytes_read_so_far;
     uint8_t *stream_data_ptr;
     uint8_t *extra_data_buffer;
     uint8_t *extra_data_read_pointer;
     int extra_data_bytes;
+    uint8_t *bulk_sync_read_buffer;
 };
 
 #define BANK_SIZE (1024*1024)
+#define PACKET_SIZE 4096
+#define RING_BUFFER_SIZE (1024*1024)
 
 static enum Ice9Error ecode;
 
 #define lib_try(x) {ecode = (x); if (ecode != OK) {return ecode;}}
 
+// Helper functions for the ring buffer
+int bytes_in_read_buffer(struct ice9_handle* hnd) {
+    return ((hnd->read_buffer_head + RING_BUFFER_SIZE - hnd->read_buffer_tail) % RING_BUFFER_SIZE);
+}
+
+// The max fill is one byte less since we do not track 
+// if head==tail means the buffer is full or if it is empty.
+int free_space_in_read_buffer(struct ice9_handle* hnd) {
+    return RING_BUFFER_SIZE - 1 - bytes_in_read_buffer(hnd);
+}
+
+// Read bytes from the read buffer to the destination buffer up to the specified
+// count.  Will not underflow the buffer.  Returns the number of bytes actually
+// transferred.  Callers responsibility to make sure dest buffer can hold count 
+// bytes.
+int drain_from_read_buffer(struct ice9_handle* hnd, uint8_t* dest, int count) {
+    // Because of the modulo operations, we cache this calculation.
+    int in_buffer = bytes_in_read_buffer(hnd);
+    // This can always be done in at most 2 memcopy operations.  The first step 
+    // is to update the count so it does not exceed the number of bytes we have
+    // in the buffer.
+    count = MIN(count, in_buffer);
+    // The first transfer takes tail to min(tail + count, BUFSIZE), or
+    // min(count, BUFSIZE-tail) bytes
+    int first_transfer = MIN(count, RING_BUFFER_SIZE - hnd->read_buffer_tail);
+    memcpy(dest, hnd->read_buffer + hnd->read_buffer_tail, first_transfer);
+    dest += first_transfer;
+    // Update the tail pointer
+    hnd->read_buffer_tail = (hnd->read_buffer_tail + first_transfer) % RING_BUFFER_SIZE;
+    // The second transfer is now up to the remaining bytes
+    int second_transfer = count - first_transfer;
+    memcpy(dest, hnd->read_buffer + hnd->read_buffer_tail, second_transfer);
+    hnd->read_buffer_tail += second_transfer;
+    return count;
+}
+
+// Write bytes to the read buffer up to the specified count.  Will not overflow the
+// buffer.  Returns the number of bytes actually written.  
+int enqueue_to_read_buffer(struct ice9_handle* hnd, const uint8_t*src, int count) {
+    // Calculate the amount of free space and adjust the count
+    int buffer_space = free_space_in_read_buffer(hnd);
+    // adjust the bytes to enqueue to ensure the buffer does not overflow
+    count = MIN(count, buffer_space);
+    // This can always be done in at most 2 memcpy operations.  The first
+    // transfer takes head to min(head + count, BUFSIZE) or 
+    // min(count, BUFSIZE-head) bytes
+    int first_transfer = MIN(count, RING_BUFFER_SIZE - hnd->read_buffer_head);
+    memcpy(hnd->read_buffer + hnd->read_buffer_head, src, first_transfer);
+    src += first_transfer;
+    // Update the head pointer
+    hnd->read_buffer_head = (hnd->read_buffer_head + first_transfer) % RING_BUFFER_SIZE;
+    // The second transfer is now up to the remaining bytes
+    int second_transfer = count - first_transfer;
+    memcpy(hnd->read_buffer + hnd->read_buffer_head, src, second_transfer);
+    hnd->read_buffer_head += second_transfer;
+    return count;
+}
+
+
 struct ice9_handle* ice9_new(void) {
     struct ice9_handle *p = (struct ice9_handle *)(malloc(sizeof(struct ice9_handle)));
-    p->ftdi_ptr = ftdi_new();
+    if (libusb_init(&p->context) < 0) {
+        return NULL;
+    }
+    p->read_buffer = (uint8_t*) malloc(RING_BUFFER_SIZE);
+    p->read_buffer_size = RING_BUFFER_SIZE;
+    p->read_buffer_head = 0;
+    p->read_buffer_tail = 0;
     p->extra_data_buffer = (uint8_t*) malloc(BANK_SIZE);
     p->extra_data_read_pointer = p->extra_data_buffer;
     p->extra_data_bytes = 0;
+    p->bulk_sync_read_buffer = (uint8_t*) malloc(PACKET_SIZE);
     return p;
 }
 
 void ice9_free(struct ice9_handle *hnd) {
-    ftdi_free(hnd->ftdi_ptr);
+    libusb_exit(hnd->context);
     free(hnd);
 }
 
 enum Ice9Error ice9_open(struct ice9_handle *hnd) {
-    if (ftdi_read_data_set_chunksize(hnd->ftdi_ptr, 16384) != 0) {
-        return Error;
+    hnd->device = libusb_open_device_with_vid_pid(hnd->context, ICE9_VENDOR_ID, ICE9_DATA_PRODUCT_ID);
+    if (hnd->device == NULL) {
+        return USBDeviceNotFound;
     }
-    switch (ftdi_set_interface(hnd->ftdi_ptr, INTERFACE_A)) {
-        case 0: { usleep(1000); break; }
-        case -1: return UnknownInterface;
-        case -2: return USBDeviceUnavailable;
-        case -3: return DeviceAlreadyOpen;
-        default:
-            return Error;
-    }
-    switch (ftdi_usb_open(hnd->ftdi_ptr, ICE9_VENDOR_ID, ICE9_DATA_PRODUCT_ID)) {
-        case 0: return OK;
-        case -3: return USBDeviceNotFound;
-        case -4: return UnableToOpenDevice;
-        case -5: return UnableToClaimDevice;
-        case -6: return ResetFailed;
-        case -7: return SetBaudrateFailed;
-        case -8: return GetProductDescriptionFailed;
-        case -9: return GetSerialNumberFailed;
-        case -12: return GetDeviceListFromLibUSBFailed;
-        case -13: return GetDeviceDescriptorFromLibUSBFailed;
-        default:
-            return Error;
-    }
+    return OK;
 }
 
 enum Ice9Error ice9_usb_reset(struct ice9_handle *hnd) {
-    switch (ftdi_usb_reset(hnd->ftdi_ptr)) {
-        case 0: { usleep(1000); return OK; }
-        case -1: return FTDIResetFailed;
-        case -2: return USBDeviceUnavailable;
-        default:
-            return Error;
+    LOG_INFO("Reset USB w/FTDI packets\n");
+    // First, send a 0x40, 0, 0, 0
+    if (libusb_control_transfer(hnd->device, 0x40, 0, 0, 0, NULL, 0, 1000) < 0)
+    {
+        LOG_ERROR("Unable to send reset to chip...\n");
+        return ResetFailed;
     }
+    usleep(1000);
+    // Second, send a 0x40, 0, 1, 0 (2 of these)
+    for (int i = 0; i < 2; i++)
+    {
+        if (libusb_control_transfer(hnd->device, 0x40, 0, 1, 0, NULL, 0, 1000) < 0)
+        {
+            LOG_ERROR("Unable to send 0x40 x 1 reset\n");
+            return ResetFailed;
+        }
+        usleep(1000);
+    }
+    unsigned char dummy[4096];
+    int transferred = 0;
+    // Do a read from endpoint 1 for some reason.
+    int ret = libusb_bulk_transfer(hnd->device, 0x81, dummy, 4096, &transferred, 1000);
+    if (ret < 0)
+    {
+        LOG_ERROR("Unable to issue bulk read to endpoint 1 - libusb error code %d\n", ret);
+        return ResetFailed;
+    }
+    LOG_INFO("Reset bytes received: %d  %x %x %x %x\n", transferred, dummy[0], dummy[1], dummy[2], dummy[3]);
+    // Second, send a 0x40, 0, 1, 0 (4 of these)
+    for (int i = 0; i < 4; i++)
+    {
+        if (libusb_control_transfer(hnd->device, 0x40, 0, 1, 0, NULL, 0, 1000) < 0)
+        {
+            LOG_ERROR("Unable to send 0x40 x 1 reset\n");
+            return ResetFailed;
+        }
+    }
+    return OK;
 }
 
 const char* ice9_error_string(enum Ice9Error code) {
@@ -127,34 +212,48 @@ const char* ice9_error_string(enum Ice9Error code) {
 }
 
 enum Ice9Error ice9_fifo_mode(struct ice9_handle *hnd) {
-    switch (ftdi_set_bitmode(hnd->ftdi_ptr, 0xFF, 0x00)) {
-        case 0: { usleep(1000); break; }
-        case -1: return CannotEnableBitBangMode;
-        case -2: return USBDeviceUnavailable;
-        default: return Error;
+    // Next we send a 0x40, 0, 2
+    if (libusb_control_transfer(hnd->device, 0x40, 0, 2, 0, NULL, 0, 1000) < 0) {
+        LOG_ERROR("Unable to send 0x40 x 0 2\n");
+        return CannotEnableBitBangMode;
     }
-    switch (ftdi_set_latency_timer(hnd->ftdi_ptr, 1)) {
-        case 0: break;
-        case -1: return LatencyValueOutOfRange;
-        case -2: return UnableToSetLatencyTimer;
-        case -3: return USBDeviceUnavailable;
-        default: return Error;
+
+    // Then we send a 0x40, 11, 0x00ff
+    if (libusb_control_transfer(hnd->device, 0x40, 11, 0x000ff, 0, NULL, 0, 1000) < 0) {
+        LOG_ERROR("Unable to send 0x40,11 request\n");
+        return CannotEnableBitBangMode;
     }
-    switch (ftdi_set_bitmode(hnd->ftdi_ptr, 0xFF, 0x40)) {
-        case 0: return OK;
-        case -1: return CannotEnableBitBangMode;
-        case -2: return USBDeviceUnavailable;
-        default: return Error;
+    
+    // Finally, we send the mode change
+    if (libusb_control_transfer(hnd->device, 0x40, 11, 0x40FF, 0, NULL, 0, 1000) < 0) {
+        LOG_ERROR("Unable to send 0x40 11 0x40ff reset\n");
+        return CannotEnableBitBangMode;
     }
+
+    int transferred = 0;
+    unsigned char dummy[4096];
+    // Do a read from endpoint 1 for some reason.
+    int ret = libusb_bulk_transfer(hnd->device, 0x81, dummy, 4096, &transferred, 1000);
+    if (ret < 0)
+    {
+        LOG_ERROR("Unable to issue bulk read to endpoint 1 - libusb error code %d\n", ret);
+        return ResetFailed;
+    }
+    LOG_ERROR("Mode set reset bytes received: %d  %x %x %x %x\n", transferred, dummy[0], dummy[1], dummy[2], dummy[3]);
+
+    // Send a lot of zeros...
+    unsigned char jnk[4096];
+    memset(jnk, 0, 4096);
+    int actual_length = 0;
+    ret = libusb_bulk_transfer(hnd->device, 0x02, jnk, 4096, &actual_length, 1000);
+    LOG_ERROR("Reset clear write packet %d %d\n", actual_length, ret);
+    ice9_ping_bridge(hnd, 0x67);
+    return OK;
 }
 
 enum Ice9Error ice9_close(struct ice9_handle *hnd) {
-    switch (ftdi_usb_close(hnd->ftdi_ptr)) {
-        case 0: return OK;
-        case -1: return USBReleaseFailed;
-        case -3: return FTDIContextInvalid;
-        default: return Error;
-    }
+    libusb_close(hnd->device);
+    return OK;
 }
 
 /*
@@ -183,7 +282,7 @@ int bank_bytes(struct ice9_handle *hnd, const uint8_t *ptr, int to_bank) {
     return 1;
 }
 
-int read_callback(uint8_t *buffer, int length, FTDIProgressInfo *progress, void *userdata) {
+int read_callback(uint8_t *buffer, int length, void *userdata) {
     struct ice9_handle *hnd = (struct ice9_handle *)(userdata);
     // First transfer bytes from the backing store (if available)
     int copy_from_store = transfer_bytes(hnd, hnd->extra_data_read_pointer, hnd->extra_data_bytes);
@@ -218,65 +317,110 @@ int read_callback(uint8_t *buffer, int length, FTDIProgressInfo *progress, void 
 
 // Custom version of this is needed because we do not want to reset the
 // chip between stream reads..
+/*
 int ftdi_readstream_ice9(struct ftdi_context *ftdi,
                      FTDIStreamCallback *callback, void *userdata,
                      int packetsPerTransfer, int numTransfers);
+*/
+
 
 
 enum Ice9Error ice9_stream_read(struct ice9_handle *hnd, uint8_t *data, int num_bytes) {
-    hnd->stream_bytes_read_so_far = 0;
-    hnd->stream_bytes_to_read = num_bytes;
-    hnd->stream_data_ptr = data;
-    // HACKY-HACK.
-    // Without this, libFTDI waits for the timeout to expire when the stream is terminated.
-    hnd->ftdi_ptr->usb_read_timeout = 10;
-    int ret = ftdi_readstream_ice9(hnd->ftdi_ptr, read_callback, hnd, 8, 16);
-    hnd->ftdi_ptr->usb_read_timeout = 5000;
-    if (ret > 0) {
-        return OK;
-    }
-    return Error;
-}
-
-
-enum Ice9Error ice9_read(struct ice9_handle *hnd, uint8_t *data, int num_bytes) {
-    int read_so_far = 0;
-    while (read_so_far < num_bytes) {
-        int ret = ftdi_read_data(hnd->ftdi_ptr, data, num_bytes - read_so_far);
+    // First, try and supply as many bytes from the cached buffer as possible
+    int from_cache = drain_from_read_buffer(hnd, data, num_bytes);
+    data += from_cache;
+    num_bytes -= from_cache; // Safe, as drain never returns more than the requested number of bytes.
+    // Do we need more data?  Try to siphon from the device
+    while (num_bytes > 0) {
+        uint8_t buffer[16384];
+        int bytes_read = 0;
+        // Yes... So request a buffer.  Because of the way USB works, we do not seem to request
+        // the number of bytes we actually want.  Instead, we ask for data, and simply supply a 
+        // buffer that is large enough to hold the maximum number of bytes that might come back.
+        // For this case, we want libusb to issue a lot of requests, so indicate a large buffer.
+        // Making the buffer larger than 16K causes it to fail.
+        int ret = libusb_bulk_transfer(hnd->device, 0x81, buffer, 16384, &bytes_read, 1000);
         if (ret < 0) {
+            LOG_ERROR("libusb transfer error: %s\n", libusb_error_name(ret));
             return Error;
         }
-        read_so_far += ret;
-        data += ret;
+        // Strip the status bytes from the read buffer.
+        uint8_t *src = buffer;
+        uint8_t buffer_stripped[16384];
+        uint8_t *dest = buffer_stripped;
+        int valid_read = 0;
+        while (bytes_read > 0) { // Note, we assume packets are well formed here
+            int to_copy = MIN(510, bytes_read - 2);
+            memcpy(dest, src + 2, to_copy);
+            bytes_read -= to_copy + 2;
+            valid_read += to_copy;
+            dest += to_copy;
+            src += to_copy + 2;
+        }
+        // Transfer bytes (as many as possible) to the caller's buffer
+        src = buffer_stripped;
+        if ((valid_read > 0) && (num_bytes > 0)) {
+            int pass_through = MIN(num_bytes, valid_read);
+            memcpy(data, src, pass_through);
+            src += pass_through;
+            data += pass_through;
+            num_bytes -= pass_through;
+            valid_read -= pass_through;
+        }
+        // Stash any left over bytes
+        if ((num_bytes == 0) && (valid_read != 0)) {
+            enqueue_to_read_buffer(hnd, src, valid_read);
+            valid_read = 0;
+        }
+    }
+    return OK;
+}
+
+enum Ice9Error ice9_read(struct ice9_handle *hnd, uint8_t *data, int num_bytes) {
+    // First, try and supply as many bytes from the cached buffer as possible
+    int from_cache = drain_from_read_buffer(hnd, data, num_bytes);
+    data += from_cache;
+    num_bytes -= from_cache; // Safe, as drain never returns more than the requested number of bytes.
+    // Do we need more data?  Try to siphon from the device
+    while (num_bytes > 0) {
+        uint8_t buffer[512];
+        int bytes_read = 0;
+        // Yes... So request a buffer.  Because of the way USB works, we do not seem to request
+        // the number of bytes we actually want.  Instead, we ask for data, and simply supply a 
+        // buffer that is large enough to hold the maximum number of bytes that might come back.
+        // For this read, we assume the reads are small, so we ask for the data 1 packet at a time
+        int ret = libusb_bulk_transfer(hnd->device, 0x81, buffer, 512, &bytes_read, 1000);
+        if (ret < 0) {
+            LOG_ERROR("libusb transfer error: %s\n", libusb_error_name(ret));
+            return Error;
+        }
+        // Transfer as many bytes to the output as we can.  Discard the first two as they are
+        // garbage.
+        if (bytes_read > 2) {
+            int pass_through = MIN(num_bytes, bytes_read - 2);
+            int read_bytes_leftover = bytes_read - 2 - pass_through;
+            memcpy(data, buffer + 2, pass_through);
+            data += pass_through;
+            num_bytes -= pass_through;
+            // Check for the case that we have satisfied the read request, but there are leftover
+            // bytes
+            if ((num_bytes == 0) && (read_bytes_leftover > 0)) {
+                enqueue_to_read_buffer(hnd, buffer + pass_through, read_bytes_leftover);
+            }
+        }
     }
     return OK;
 }
 
 enum Ice9Error ice9_write(struct ice9_handle *hnd, const uint8_t *data, int num_bytes) {
-    int ret = ftdi_write_data(hnd->ftdi_ptr, data, num_bytes);
-    if (ret == num_bytes) {
-        return OK;
+    int actual_length = 0;
+    if (libusb_bulk_transfer(hnd->device, 0x02, (unsigned char *) data, num_bytes, &actual_length, 1000) < 0) {
+        return LibUSBIOError;
     }
-    if (ret > 0) {
+    if (actual_length != num_bytes) {
         return PartialWrite;
     }
-    switch (ret) {
-        case -666: return USBDeviceUnavailable;
-        case -1: return LibUSBIOError;
-        case -2: return LibUSBInvalidParameter;
-        case -3: return LibUSBAccessDenied;
-        case -4: return LibUSBNoDeviceFound;
-        case -5: return LibUSBEntityNotFound;
-        case -6: return LibUSBResourceBusy;
-        case -7: return LibUSBTimeout;
-        case -8: return LibUSBOverflow;
-        case -9: return LibUSBPipeError;
-        case -10: return LibUSBInterrupted;
-        case -11: return LibUSBInsufficientMemory;
-        case -12: return LibUSBOperationNotSupported;
-        default:
-            return Error;
-    }
+    return OK;
 }
 
 enum Ice9Error ice9_write_words(struct ice9_handle *hnd, uint16_t *data, uint16_t len) {
